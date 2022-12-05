@@ -1,0 +1,3 @@
+build/dmenu
+build/stest
+*.o
