@@ -1,3 +1,3 @@
-build/dmenu
-build/stest
+dmenu
+stest
 *.o
