@@ -6,10 +6,9 @@ include src/config.mk
 SRC = drw dmenu util stest
 OBJ = $(addsuffix .o,  $(addprefix obj/, $(SRC)))
 
-all: options dmenu stest
+all: dmenu stest
 
 options:
-	@echo $(OBJ)
 	@echo dmenu build options:
 	@echo "CFLAGS   = $(CFLAGS)"
 	@echo "LDFLAGS  = $(LDFLAGS)"
