@@ -1,52 +1,45 @@
 # dmenu - dynamic menu
 # See LICENSE file for copyright and license details.
 
-include config.mk
+include src/config.mk
 
-SRC = drw.c dmenu.c stest.c util.c
-OBJ = $(SRC:.c=.o)
+SRC = drw dmenu util stest
+OBJ = $(addsuffix .o,  $(addprefix obj/, $(SRC)))
 
 all: options dmenu stest
 
 options:
+	@echo $(OBJ)
 	@echo dmenu build options:
 	@echo "CFLAGS   = $(CFLAGS)"
 	@echo "LDFLAGS  = $(LDFLAGS)"
 	@echo "CC       = $(CC)"
 
-.c.o:
-	$(CC) -c $(CFLAGS) $<
+$(OBJ): src/arg.h src/config.h src/config.mk src/drw.h
+	mkdir -p obj
+	$(CC) -o $@ -c $(CFLAGS) src/$(basename $(notdir $@)).c
 
-$(OBJ): arg.h config.h config.mk drw.h
+dmenu: obj/dmenu.o obj/drw.o obj/util.o
+	mkdir -p bin
+	$(CC) -o bin/$@ obj/dmenu.o obj/drw.o obj/util.o $(LDFLAGS)
 
-dmenu: dmenu.o drw.o util.o
-	$(CC) -o $@ dmenu.o drw.o util.o $(LDFLAGS)
-
-stest: stest.o
-	$(CC) -o $@ stest.o $(LDFLAGS)
+stest: obj/stest.o
+	$(CC) -o bin/$@ obj/stest.o $(LDFLAGS)
 
 clean:
-	rm -f dmenu stest $(OBJ) dmenu-$(VERSION).tar.gz
-
-dist: clean
-	mkdir -p dmenu-$(VERSION)
-	cp LICENSE Makefile README arg.h config.h config.mk dmenu.1\
-		drw.h util.h dmenu_path dmenu_run stest.1 $(SRC)\
-		dmenu-$(VERSION)
-	tar -cf dmenu-$(VERSION).tar dmenu-$(VERSION)
-	gzip dmenu-$(VERSION).tar
-	rm -rf dmenu-$(VERSION)
+	rm -f dmenu-$(VERSION).tar.gz
+	rm -rf bin/ obj/
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	cp -f dmenu dmenu_path dmenu_run stest $(DESTDIR)$(PREFIX)/bin
+	cp -f bin/dmenu src/dmenu_path src/dmenu_run bin/stest $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_path
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_run
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/stest
 	mkdir -p $(DESTDIR)$(MANPREFIX)/man1
-	sed "s/VERSION/$(VERSION)/g" < dmenu.1 > $(DESTDIR)$(MANPREFIX)/man1/dmenu.1
-	sed "s/VERSION/$(VERSION)/g" < stest.1 > $(DESTDIR)$(MANPREFIX)/man1/stest.1
+	sed "s/VERSION/$(VERSION)/g" < src/dmenu.1 > $(DESTDIR)$(MANPREFIX)/man1/dmenu.1
+	sed "s/VERSION/$(VERSION)/g" < src/stest.1 > $(DESTDIR)$(MANPREFIX)/man1/stest.1
 	chmod 644 $(DESTDIR)$(MANPREFIX)/man1/dmenu.1
 	chmod 644 $(DESTDIR)$(MANPREFIX)/man1/stest.1
 
@@ -58,4 +51,4 @@ uninstall:
 		$(DESTDIR)$(MANPREFIX)/man1/dmenu.1\
 		$(DESTDIR)$(MANPREFIX)/man1/stest.1
 
-.PHONY: all options clean dist install uninstall
+.PHONY: all options clean install uninstall
