@@ -23,6 +23,8 @@ make clean install
 - allow-color-font
 - alpha
 - border
+- topbar
+- center
 
 ## Running dmenu
 
