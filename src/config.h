@@ -29,7 +29,7 @@ static unsigned int lines      = 0;
 static unsigned int lineheight = 0;
 static unsigned int min_lineheight = 8;
 
-static unsigned int shownumbers = 0;
+static unsigned int shownumbers = 1;
 
 /*
  * Characters not considered part of a word while deleting words

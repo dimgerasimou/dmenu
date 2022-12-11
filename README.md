@@ -27,6 +27,7 @@ make clean install
 - center
 - lineheight
 - numbers
+- password
 
 ## Running dmenu
 
