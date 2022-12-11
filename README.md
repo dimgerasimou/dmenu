@@ -1,6 +1,7 @@
 # dmenu - dynamic menu
 
-dmenu is an efficient dynamic menu for X.
+dmenu is an efficient dynamic menu for X by suckless.  
+This is my heavily patched version that can be used for app launcher, prompt and in scripts.
 
 ## Requirements
 
@@ -12,10 +13,9 @@ Edit config.mk to match your local setup (dmenu is installed into
 the /usr/local namespace by default).
 
 Afterwards enter the following command to build and install dmenu
-(if necessary as root):
 
 ```bash
-make clean install
+sudo make clean install
 ```
 
 ## Patches
@@ -31,6 +31,7 @@ make clean install
 - highlight
 - xresources
 - instant
+- tsv
 
 ## Running dmenu
 
