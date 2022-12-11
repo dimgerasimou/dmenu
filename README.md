@@ -26,6 +26,7 @@ make clean install
 - topbar
 - center
 - lineheight
+- numbers
 
 ## Running dmenu
 
