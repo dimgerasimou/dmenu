@@ -25,6 +25,7 @@ make clean install
 - border
 - topbar
 - center
+- lineheight
 
 ## Running dmenu
 
