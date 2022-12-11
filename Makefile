@@ -36,7 +36,7 @@ install: all
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_path
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_run
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/stest
-	mkdir -p $(DESTDIR)$(MANPREFIX)/man1
+	mkdir -p  $(DESTDIR)$(MANPREFIX)/man1
 	sed "s/VERSION/$(VERSION)/g" < src/dmenu.1 > $(DESTDIR)$(MANPREFIX)/man1/dmenu.1
 	sed "s/VERSION/$(VERSION)/g" < src/stest.1 > $(DESTDIR)$(MANPREFIX)/man1/stest.1
 	chmod 644 $(DESTDIR)$(MANPREFIX)/man1/dmenu.1
