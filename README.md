@@ -30,6 +30,7 @@ make clean install
 - password
 - highlight
 - xresources
+- instant
 
 ## Running dmenu
 
