@@ -28,6 +28,8 @@ make clean install
 - lineheight
 - numbers
 - password
+- highlight
+- xresources
 
 ## Running dmenu
 
