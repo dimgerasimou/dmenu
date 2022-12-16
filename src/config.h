@@ -11,7 +11,7 @@ static const unsigned int alpha = 220;
 static char font[] = { "monospace:size=10" };
 static const char *fonts[] = {
 	font,
-	"monospace:size=10"
+	"JoyPixels:style=Regular:size=10"
 };
 
 static char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
