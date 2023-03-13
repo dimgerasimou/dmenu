@@ -32,6 +32,8 @@ sudo make clean install
 - xresources
 - instant
 - tsv
+- mousesupport
+- prefixcompletion
 
 ## Running dmenu
 
