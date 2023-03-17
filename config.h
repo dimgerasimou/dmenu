@@ -8,10 +8,11 @@ static int min_width = 500;                 /* minimum width when centered */
 static const unsigned int alpha = 220;
 
 /* -fn option overrides fonts[0]; default X11 font or font set */
-static char font[] = { "monospace:size=10" };
+static char font[] = { "JetBrains Mono Nerd Font:style=Regular:size=12" };
 static const char *fonts[] = {
 	font,
-	"JoyPixels:style=Regular:size=10"
+	"JoyPixels:style=Regular:size=10",
+	"monospace:size=10"
 };
 
 static char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
