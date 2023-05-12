@@ -3,10 +3,10 @@
 
 include config.mk
 
-SRC = drw dmenu util stest
+SRC = drw dmenu util stest dmenu_appmenu
 OBJ = $(addsuffix .o,  $(addprefix obj/, $(SRC)))
 
-all: dmenu stest
+all: dmenu stest dmenu_appmenu
 
 options:
 	@echo dmenu build options:
@@ -25,16 +25,20 @@ dmenu: obj/dmenu.o obj/drw.o obj/util.o
 stest: obj/stest.o
 	$(CC) -o bin/$@ obj/stest.o $(LDFLAGS)
 
+dmenu_appmenu: obj/dmenu_appmenu.o
+	$(CC) -o bin/$@ obj/dmenu_appmenu.o $(LDFLAGS)
+
 clean:
 	rm -f dmenu-$(VERSION).tar.gz
 	rm -rf bin/ obj/
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	cp -f bin/dmenu dmenu_path dmenu_run bin/stest $(DESTDIR)$(PREFIX)/bin
+	cp -f bin/dmenu bin/stest bin/dmenu_appmenu dmenu_path dmenu_run $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_path
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_run
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/dmenu_appmenu
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/stest
 	mkdir -p  $(DESTDIR)$(MANPREFIX)/man1
 	sed "s/VERSION/$(VERSION)/g" < dmenu.1 > $(DESTDIR)$(MANPREFIX)/man1/dmenu.1
@@ -46,6 +50,7 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/dmenu\
 		$(DESTDIR)$(PREFIX)/bin/dmenu_path\
 		$(DESTDIR)$(PREFIX)/bin/dmenu_run\
+		$(DESTDIR)$(PREFIX)/bin/dmenu_appmenu\
 		$(DESTDIR)$(PREFIX)/bin/stest\
 		$(DESTDIR)$(MANPREFIX)/man1/dmenu.1\
 		$(DESTDIR)$(MANPREFIX)/man1/stest.1
