@@ -26,7 +26,7 @@ stest: obj/stest.o
 	$(CC) -o bin/$@ obj/stest.o $(LDFLAGS)
 
 dmenu_appmenu: obj/dmenu_appmenu.o
-	$(CC) -o bin/$@ obj/dmenu_appmenu.o $(LDFLAGS)
+	$(CC) -o bin/$@ obj/dmenu_appmenu.o
 
 clean:
 	rm -f dmenu-$(VERSION).tar.gz

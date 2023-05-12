@@ -135,11 +135,15 @@ entriesfromfile()
 	char buffer[NAME_ENTRY_LEN + 1];
 
 	if ((cacheenv = getenv("XDG_CACHE_HOME")) == NULL) {
-		perror("Failed to get \"XDG_CACHE_HOME\" enviroment");
-		return entriestostr();
+		if ((cacheenv = getenv("HOME")) == NULL) {
+			perror("Failed to get \"HOME\" environment variable");
+			exit(EXIT_FAILURE);
+		}
+		strcpy(path, cacheenv);
+		strcat(path, "/.cache");
+	} else {
+		strcpy(path, cacheenv);
 	}
-
-	strcpy(path, cacheenv);
 
 	for (int i = 0; i < cachepathsize - 1; i++) {
 		strcat(path, cachepath[i]);
@@ -400,11 +404,15 @@ getignapplist()
 	int counter = 0;
 	
 	if ((configenv = getenv("XDG_CONFIG_HOME")) == NULL) {
-		perror("Failed to get \"XDG_CONFIG_HOME\" enviroment variable");
-		return 0;
+		if ((configenv = getenv("HOME")) == NULL) {
+			perror("Failed to get \"HOME\" enviroment variable");
+			exit(EXIT_FAILURE);
+		}
+		strcpy(path, configenv);
+		strcat(path, "/.config");
+	} else {
+		strcpy(path, configenv);
 	}
-
-	strcpy(path, configenv);
 	strcat(path, ignorepath);
 
 	if ((fp = fopen(path, "r")) == NULL)
