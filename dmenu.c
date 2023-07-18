@@ -206,6 +206,9 @@ drawhighlights(struct item *item, int x, int y, int maxw)
 static int
 drawitem(struct item *item, int x, int y, int w)
 {
+	char *ptr = NULL;
+	char str[strlen(item->text)];
+
 	if (item == sel)
 		drw_setscheme(drw, scheme[SchemeSel]);
 	else if (item->out)
@@ -213,7 +216,27 @@ drawitem(struct item *item, int x, int y, int w)
 	else
 		drw_setscheme(drw, scheme[SchemeNorm]);
 
-	int r = drw_text(drw, x, y, w, bh, lrpad / 2, item->stext, 0);
+	int r;
+	if (!ignoretab) {
+		r = drw_text(drw, x, y, w, bh, lrpad / 2, item->stext, 0);
+	} else {
+		for (int i =0; i < strlen(item->text); i++) {
+			if (item->text[i] != '\t') {
+				ptr = item->text + i;
+				break;
+			}
+		}
+		if (ptr != NULL)
+			strcpy(str, ptr);
+		else
+		 	strcpy(str, item->text);
+		for (int i = 0; i < strlen(str); i++) {
+			if (str[i] == '\t')
+				str[i] = ' ';
+		}
+		r = drw_text(drw, x, y, w, bh, lrpad / 2, str, 0);
+	}
+
 	drawhighlights(item, x, y, w);
 	return r;
 }
@@ -838,8 +861,11 @@ readstdin(void)
 			*p = '\0';
 		if (!(items[i].text = strdup(buf)))
 			die("cannot strdup %zu bytes:", strlen(buf) + 1);
-		if ((p = strchr(buf, '\t')))
-			*p = '\0';
+		if ((p = strchr(buf, '\t'))) {
+			if (!ignoretab) {
+				*p = '\0';
+			}
+		}
 		if (!(items[i].stext = strdup(buf)))
 			die("cannot strdup %zu bytes:", strlen(buf) + 1);
 		items[i].out = 0;
@@ -1054,7 +1080,7 @@ setup(void)
 static void
 usage(void)
 {
-	fputs("usage: dmenu [-bfinvxP] [-l lines] [-h height] [-p prompt] [-fn font] [-m monitor]\n"
+	fputs("usage: dmenu [-abfinvxP] [-l lines] [-h height] [-p prompt] [-fn font] [-m monitor]\n"
 	      "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]\n", stderr);
 	exit(1);
 }
@@ -1109,6 +1135,8 @@ main(int argc, char *argv[])
 			exit(0);
 		} else if (!strcmp(argv[i], "-b")) /* appears at the bottom of the screen */
 			topbar = 0;
+		else if (!strcmp(argv[i], "-a"))   /* ignores '\t' characters*/
+			ignoretab = 1;
 		else if (!strcmp(argv[i], "-t"))   /* appears at the top of the screen */
 			topbar = 1;
 		else if (!strcmp(argv[i], "-f"))   /* grabs keyboard before reading stdin */
