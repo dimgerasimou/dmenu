@@ -708,6 +708,7 @@ buttonpress(XEvent *e)
 	w = (lines > 0 || !matches) ? mw - x : inputw;
 
 	/* left-click on input: clear input,
+	 * left-click on selection: same as enter,
 	 * NOTE: if there is no left-arrow the space for < is reserved so
 	 *       add that to the input width */
 	if (ev->button == Button1 &&
@@ -717,6 +718,9 @@ buttonpress(XEvent *e)
 		insert(NULL, -cursor);
 		drawmenu();
 		return;
+	} else if (ev->button == Button1) {
+		puts(sel ? sel->text : text);
+		exit(0);
 	}
 	/* middle-mouse click: paste selection */
 	if (ev->button == Button2) {
