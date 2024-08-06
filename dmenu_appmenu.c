@@ -7,605 +7,610 @@
  * launched app at the top of the list.
 */
 
+#define _POSIX_C_SOURCE 200809L
+#include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <dirent.h>
-#include <errno.h>
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
-#define NAME_ENTRY_LEN 128
-#define CMD_ENTRY_LEN 256
-#define BUFFER_SIZE 512
-#define PATH_SIZE 512
+#define BUF_SIZE 1024
 
-struct appentry {
-	char name[NAME_ENTRY_LEN];
-	char exec[CMD_ENTRY_LEN];
-};
+typedef struct {
+	char *name;
+	char *exec;
+} Exec;
 
-static const char *ignorepath = "/dmenu/ignoreapplications";
+typedef struct {
+	Exec **i;
+	size_t ni;
+} ExecArray;
 
-static const char *cachepath[] = {"/dmenu", "/applicationlist"};
-static const int cachepathsize = 2;
+const char *ignorepath[] = {"$XDG_CONFIG_HOME", "dmenu", "ignoreapplications", NULL};
+const char *cachepath[] = {"$XDG_CACHE_HOME", "dmenu", "applicationlist"};
+const char *entriespath[] = {"usr", "share", "applications"};
 
-static struct appentry *appentrylist = NULL;
-static int  appentrysize = 0;
+static void addexecentry(ExecArray *arr, const char *path);
+static void deleteexec(Exec *exec);
+static void execute(Exec *item);
+static void freeexecarray(ExecArray *arr);
+static int getdmenuint(const char *menu, char *argv[]);
+static char* getentrypath(const char *path, const char *name);
+static ExecArray* getexec(void);
+static char* getexecstring(ExecArray *arr);
+static int getindex(ExecArray *arr, char *argv[]);
+static char *getpath(const char **arr);
+static int isfile(const char *path);
+static int ishiddenentry(FILE *fp);
+static void mkparentdir(const char *path);
+static void parseexecentry(ExecArray *arr, FILE *fp);
+static void removeentry(ExecArray *arr, const char *name);
+static void removeignored(ExecArray *arr);
+static void setexecorder(ExecArray *arr);
+static void swapexec(ExecArray *arr, const size_t indexa, const size_t indexb);
+static void trimwhitespace(char *str);
+static void writeselection(ExecArray *arr, const int selection);
 
-static char **ignapplist = NULL;
-static int  ignappsize = 0;
-
-
-/* function declerations */
-int appentryapp(char *name, char *exec);
-int checkdir(char *path);
-int checkfilestat(char *path);
-int checkhiddenentry(FILE *fp);
-int checkignoredentry(char *name);
-char *entriesfromfile();
-void entriestofile(char *path);
-char *entriestostr();
-void execcmd(char *cmd);
-void freeignapplist();
-char *getecommand(char **argv, int argc);
-void getentries(char *path);
-int getentry(char *path);
-int getignapplist();
-void getnameexec(char *string, char *ret, int isexec);
-void parsestr(char *str);
-void prependapp(char *name);
-char* printmenu(char *menu, char **argv, int argc);
-
-int
-appentryapp(char *name, char *exec)
+static void
+addexecentry(ExecArray *arr, const char *path)
 {
-	if (strlen(name) == 0 || strlen(exec) == 0) 
-		return -1;
-	
-	if (strlen(name) > NAME_ENTRY_LEN - 1 || strlen(exec) > CMD_ENTRY_LEN - 1) {
-		fprintf(stderr, "String overload at entry with name:%s\n", name);
-		exit(EXIT_FAILURE);
+	FILE *fp;
+
+	if (!isfile(path))
+		return;
+
+	if (!(fp = fopen(path, "r")))
+		return;
+
+	if (ishiddenentry(fp)) {
+		fclose(fp);
+		return;
 	}
-	strcpy(appentrylist[appentrysize].name, name);
-	strcpy(appentrylist[appentrysize].exec, exec);
-	appentrysize++;
-	return 1;
+
+	parseexecentry(arr, fp);
+	fclose(fp);
 }
 
-int
-checkdir(char *path)
+static void
+deleteexec(Exec *exec)
 {
-	DIR *dp = opendir(path);
-	int ret = -1;
+	if (!exec)
+		return;
+	if (exec->exec)
+		free(exec->exec);
+	if (exec->name)
+		free(exec->name);
+	free(exec);
+}
 
-	if (dp) 
-		ret = 0;
-	else if (errno == ENOENT) 
-		ret = 1;
+static void
+execute(Exec *item)
+{
+	switch (fork()) {
+	case -1:
+		perror("fork() failed");
+		exit(errno);
 
-	(void) closedir(dp);
+	case 0:
+		setsid();
+		execl("/bin/sh", "sh", "-c", item->exec, NULL);
+		exit(errno);
+
+	default:
+		break;
+	}
+}
+
+static void
+freeexecarray(ExecArray *arr)
+{
+	if (!arr)
+		return;
+	for (size_t i = 0; i < arr->ni; i++) 
+		deleteexec(arr->i[i]);
+	free(arr->i);
+	free(arr);
+}
+
+static int
+getdmenuint(const char *menu, char *argv[])
+{
+	int option;
+	int writepipe[2];
+	int readpipe[2];
+	char buffer[BUF_SIZE];
+	char **args;
+	char *ptr;
+	size_t argc = 0;
+
+	for (char **ptr = argv; *ptr != NULL; ptr++)
+		argc++;
+
+	if (!(args = malloc((argc + 1) * sizeof (char*)))) {
+		perror("malloc() failed");
+		exit(errno);
+	}
+
+	args[0] = strdup("dmenu");
+	for (size_t i = 1; i < argc; i++) {
+		args[i] = strdup(argv[i]);
+	}
+	args[argc] = NULL;
+
+	option = -EREMOTEIO;
+	buffer[0] = '\0';
+
+	if (pipe(writepipe) < 0 || pipe(readpipe) < 0) {
+		perror("pipe() failed");
+		exit(errno);
+	}
+	
+	switch (fork()) {
+	case -1:
+		perror("fork() failed");
+		exit(errno);
+
+	case 0: /* child - prompt application */
+		close(writepipe[1]);
+		close(readpipe[0]);
+
+		dup2(writepipe[0], STDIN_FILENO);
+		close(writepipe[0]);
+
+		dup2(readpipe[1], STDOUT_FILENO);
+		close(readpipe[1]);
+
+		execv("/usr/local/bin/dmenu", args);
+		exit(EXIT_FAILURE);
+
+	default: /* parent */
+		close(writepipe[0]);
+		close(readpipe[1]);
+
+		write(writepipe[1], menu, strlen(menu) + 1);
+		close(writepipe[1]);
+
+		wait(NULL);
+
+		read(readpipe[0], buffer, sizeof(buffer));
+		close(readpipe[0]);
+	}
+	ptr = strchr(buffer, '\t');
+	if (ptr != NULL)
+		sscanf(ptr, "%d", &option);
+
+	for (char **ptr = args; *ptr != NULL; ptr++)
+		if (*ptr)
+			free(*ptr);
+	free(args);
+	return option;
+}
+
+static char*
+getentrypath(const char *path, const char *name)
+{
+	char *ret;
+	size_t len;
+
+	len = (strlen(path) + strlen(name) + 3);
+	if (!(ret = malloc(len * sizeof(char))))
+		return NULL;
+
+	snprintf(ret, len - 1, "%s/%s", path, name);
+	ret[len - 1] = '\0';
 	return ret;
 }
 
-int
-checkfilestat(char *path)
+static ExecArray*
+getexec(void)
 {
-	struct stat path_stat;
+	ExecArray *ret;
+	char *path;
+	DIR *dirp;
+	struct dirent *dp;
+	const char *basepath = getpath(entriespath);
 
-	stat(path, &path_stat);
-	return S_ISREG(path_stat.st_mode);
+	if (!(dirp = opendir(basepath))) {
+		fprintf(stderr,"opendir() failed for: %s - %s", basepath, strerror(errno));
+		exit(errno);
+	}
+
+	if (!(ret = malloc(sizeof(ExecArray)))) {
+		perror("malloc() failed");
+		exit(errno);
+	}
+
+	ret->i = NULL;
+	ret->ni = 0;
+
+	while ((dp = readdir(dirp))) {
+		path = getentrypath(basepath, dp->d_name);
+		addexecentry(ret, path);
+		free(path);
+	}
+
+	closedir(dirp);
+
+	removeignored(ret);
+	return ret;
 }
 
-int
-checkhiddenentry(FILE *fp)
+static char*
+getexecstring(ExecArray *arr)
 {
-	char buffer[BUFFER_SIZE];
+	char *ret = NULL;
+	char *temp;
+	char buf[BUF_SIZE];
+	size_t len = 1;
 
-	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-		if (strstr(buffer, "NotShowIn")      != NULL ||
-		    strstr(buffer, "OnlyShowIn")     != NULL ||
-		    strstr(buffer, "NoDisplay=true") != NULL ||
-		    strstr(buffer, "Terminal=true")) {
-			return 0;
+	if (!(ret = malloc(sizeof(char)))) {
+		perror("malloc() failed");
+		exit(errno);
+	}
+	ret[0] = '\0';
+
+	for (size_t i = 0; i < arr->ni; i++) {
+		snprintf(buf, sizeof(buf) - 1, "%s\t%zu\n", arr->i[i]->name, i);
+		buf[sizeof(buf) - 1] = '\0';
+		len += strlen(buf);
+		if (!(temp = realloc(ret, len * sizeof(char)))) {
+			perror("realloc() failed");
+			exit(errno);
+		}
+		strncat(temp, buf, len - strlen(temp) - 1);
+		temp[len - 2] = '\n';
+		temp[len - 1] = '\0';
+		ret = temp;
+	}
+	if (ret[len - 2] == '\n')
+		ret[len - 2] = '\0';
+	return ret;
+}
+
+static int
+getindex(ExecArray *arr, char *argv[])
+{
+	char *str = getexecstring(arr);
+	int option = getdmenuint(str, argv);
+
+	return option;
+}
+
+static char*
+getpath(const char **arr)
+{
+	
+	char *path;
+	char *env;
+	size_t spath = 1;
+	
+	if (!(path = malloc(sizeof(char)))) {
+		perror("malloc() failed");
+		exit(errno);
+	}
+	path[0] = '\0';
+
+	for (int i = 0; arr[i] != NULL; i++) {
+		if (arr[i][0] == '$') {
+			if ((env = getenv(arr[i] + 1))) {
+				spath += strlen(env);
+				if(!(path = realloc(path, spath * sizeof(char)))) {
+					perror("realloc() failed");
+					exit(errno);
+				}
+				strcat(path, env);
+				continue;
+			}
+
+			if (!strcmp(arr[i] + 1, "XDG_CONFIG_HOME")) {
+				if (!(env = getenv("HOME"))) {
+					fprintf(stderr, "ERROR - Failed to get env variable: HOME\n");
+					exit(2);
+				}
+				spath += strlen(env) + strlen("/.config");
+				if(!(path = realloc(path, spath * sizeof(char)))) {
+					perror("realloc() failed");
+					exit(errno);
+				}
+				strcat(path, env);
+				strcat(path, "/.config");
+				continue;
+			}
+
+			if (!strcmp(arr[i] + 1, "XDG_CACHE_HOME")) {
+				if (!(env = getenv("HOME"))) {
+					fprintf(stderr, "ERROR - Failed to get env variable: HOME\n");
+					exit(2);
+				}
+				spath += strlen(env) + strlen("/.cache");
+				if(!(path = realloc(path, spath * sizeof(char)))) {
+					perror("realloc() failed");
+					exit(errno);
+				}
+				strcat(path, env);
+				strcat(path, "/.cache");
+				continue;
+			}
+
+			fprintf(stderr, "ERROR - Failed to get env variable: %s\n", arr[i]);
+			exit(2);
+		} else {
+			spath += strlen(arr[i]) + 1;
+			if(!(path = realloc(path, spath * sizeof(char)))) {
+				perror("realloc() failed");
+				exit(errno);
+			}
+			strcat(path, "/");
+			strcat(path, arr[i]);
 		}
 	}
-	return 1;
+	return path;
 }
 
-int
-checkignoredentry(char *name)
+static int
+isfile(const char *path)
 {
-	for (int i = 0; i < ignappsize; i++) {
-		if (strcmp(ignapplist[i], name) == 0)
-			return 1;
-	}
+	struct stat st;
+	stat(path, &st);
+	if (S_ISREG(st.st_mode))
+		return 1;
 	return 0;
 }
 
-char*
-entriesfromfile()
+static int
+ishiddenentry(FILE *fp)
 {
-	FILE *fp;
-	char *cacheenv;
-	char *ret;
-	char path[PATH_SIZE];
-	char buffer[NAME_ENTRY_LEN + 1];
+	char buf[BUF_SIZE];
 
-	if ((cacheenv = getenv("XDG_CACHE_HOME")) == NULL) {
-		if ((cacheenv = getenv("HOME")) == NULL) {
-			perror("Failed to get \"HOME\" environment variable");
-			exit(EXIT_FAILURE);
-		}
-		strcpy(path, cacheenv);
-		strcat(path, "/.cache");
-	} else {
-		strcpy(path, cacheenv);
-	}
-
-	for (int i = 0; i < cachepathsize - 1; i++) {
-		strcat(path, cachepath[i]);
-		switch (checkdir(path)) {
-			case -1:
-				perror("checkdir error");
-				return entriestostr();
-			case 1:
-				if (mkdir(path, S_IRWXU) == -1) {
-					perror("mkdir error");
-					return entriestostr();
-				}
+	while (fgets(buf, sizeof(buf), fp)) {
+		if (strstr(buf, "NotShowIn")      ||
+		    strstr(buf, "OnlyShowIn")     ||
+		    strstr(buf, "NoDisplay=true") ||
+		    strstr(buf, "Terminal=true")) {
+			return 1;
 		}
 	}
-
-	strcat(path, cachepath[cachepathsize - 1]);
-	entriestofile(path);
-
-	if ((fp = fopen(path, "r")) == NULL) {
-		perror("Failed to open applicationlist path");
-		exit(EXIT_FAILURE);
-	}
-
-	ret = (char*) malloc((NAME_ENTRY_LEN + 1) * appentrysize * sizeof(char));
-	ret[0] = '\0';
-
-	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-		parsestr(buffer);	
-		strcat(ret, buffer);
-		strcat(ret, "\n");
-	}
-
-	fclose(fp);
-	return ret;
+	rewind(fp);
+	return 0;
 }
 
-void
-entriestofile(char *path)
+static void
+mkparentdir(const char *path)
 {
-	FILE *fp, *tmp;
-	char temppath[PATH_SIZE];
-	char buffer[NAME_ENTRY_LEN + 1];
-	short int appset[appentrysize];
+	struct stat st;
+	char *str;
+	char *ptr;
 
-	if ((fp = fopen(path, "r")) == NULL) {
-		fp = fopen(path, "w");
-		for (int i = 0; i < appentrysize; i++)
-			fprintf(fp, "%s\n", appentrylist[i].name);
-		fclose(fp);
-		return;
-	}
+	str = strdup(path);
+	if ((ptr = strrchr(str, '/')))
+		*ptr = '\0';
 
-	for (int i = 0; i < appentrysize; i++) {
-		appset[i] = 0;
-	}
+	if (stat(str, &st) == -1)
+		mkdir(str, 0700);
 
-	strcpy(temppath, path);
-	strcat(temppath, ".tmp");
+	free(str);
+}
 
-	tmp = fopen(temppath, "w");
+static void
+parseexecentry(ExecArray *arr, FILE *fp)
+{
+	Exec **temparr;
+	char buf[BUF_SIZE];
+	char *ptr;
+	char *name = NULL;
+	char *exec = NULL;
 
-	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-		if (strlen(buffer) == 0)
+	while (fgets(buf, sizeof(buf), fp)) {
+		trimwhitespace(buf);
+		if (buf[0] == '#' || buf[0] == '\0')
 			continue;
-		parsestr(buffer);
-		for (int i = 0; i < appentrysize; i++) {
-			if (strcmp(appentrylist[i].name, buffer) == 0) {
-				fprintf(tmp, "%s\n", appentrylist[i].name);
-				appset[i]++;
-				continue;
-			}
-		}
-	}
-
-	for (int i = 0; i < appentrysize; i++) {
-		if (appset[i] == 0)
-			fprintf(tmp, "%s\n", appentrylist[i].name);
-	}
-
-	if (appentrylist != NULL)
-		free(appentrylist);
-	fclose(fp);
-	fclose(tmp);
-
-	remove(path);
-	rename(temppath, path);
-}
-
-char*
-entriestostr()
-{
-	char *ret;
-	
-	ret = (char*) malloc((NAME_ENTRY_LEN+ 1) * appentrysize * sizeof(char));
-	ret[0] = '\0';
-
-	for (int i = 0; i < appentrysize; i++) {
-		strcat(ret, appentrylist[i].name);
-		strcat(ret, "\n");
-	}
-
-	if (appentrylist != NULL)
-		free(appentrylist);
-	return ret;
-}
-
-void
-execcmd(char *cmd)
-{
-	switch (fork()) {
-		case -1:
-			perror("Failed in forking");
-			if (cmd != NULL)
-				free(cmd);
-			exit(EXIT_FAILURE);
-
-		case 0:
-			setsid();
-			execl("/bin/sh", "sh", "-c", cmd, NULL);
-			if (cmd != NULL)
-				free(cmd);
-			exit(EXIT_SUCCESS);
-
-		default:
-			if (cmd != NULL)
-				free(cmd);
-	}
-}
-
-void
-freeignapplist()
-{
-	if (ignapplist == NULL) {
-		ignappsize = 0;
-		return;
-	}
-	for (int i = 0; i < ignappsize; i++) {
-		if (ignapplist[i] != NULL)
-			free(ignapplist[i]);
-	}
-	if (ignapplist != NULL)
-		free(ignapplist);
-	ignappsize = 0;
-}
-
-char*
-getcommand(char **argv, int argc)
-{
-	char *menu = entriesfromfile();
-	char *name = printmenu(menu, argv, argc);
-	char *cmd = NULL;
-
-	if (name == NULL)
-		return NULL;
-	parsestr(name);
-
-	if (menu != NULL)
-		free(menu);
-
-	for (int i = 0; i < appentrysize; i++) {
-		if (strcmp(appentrylist[i].name, name) == 0) {
-			cmd = (char*) malloc(CMD_ENTRY_LEN * sizeof(char));
-			strcpy(cmd, appentrylist[i].exec);
-		}
-	}
-	prependapp(name);
-	free(name);
-	return cmd;
-}
-
-void
-getentries(char *path)
-{
-	DIR *dp;
-	struct dirent *ep;
-	char filepath[PATH_SIZE];
-	int counter = 0;
-
-	if ((dp = opendir(path)) == NULL) {
-		fprintf(stderr, "Could not open the '%s' directory", path);
-		exit(EXIT_FAILURE);
-	}
-	while ((ep = readdir(dp)) != NULL)
-		counter++;
-	rewinddir(dp);
-
-	if (!getignapplist()) {
-		perror("Failed to allocate memory or env variables:getignapplist()");
-		(void) closedir(dp);
-		exit(EXIT_FAILURE);
-	}
-
-	appentrylist = (struct appentry*) malloc(counter * sizeof(struct appentry));
-
-	while ((ep = readdir(dp)) != NULL) {
-		strcpy(filepath, path);
-		strcat(filepath, ep->d_name);
-
-		if (!checkfilestat(filepath))
-			continue;
-		if (!getentry(filepath)) {
-			perror("Failed to allocate memory:getentry()");
-			freeignapplist();
-			(void) closedir(dp);
-			exit(EXIT_FAILURE);
-		}
-	}
-
-	(void) closedir(dp);
-	freeignapplist();
-	appentrylist = (struct appentry*) realloc(appentrylist, appentrysize + 1 * sizeof(struct appentry));
-}
-
-int
-getentry(char *path)
-{
-	FILE *fp;
-	char buffer[BUFFER_SIZE];
-	char name[NAME_ENTRY_LEN] = "";
-	char exec[CMD_ENTRY_LEN] = "";
-	short int found = 0;
-
-	if ((fp = fopen(path, "r")) == NULL)
-		return 1;
-	if (!checkhiddenentry(fp)) {
-		fclose(fp);
-		return 1;
-	}
-	
-	fseek(fp, 0, SEEK_SET);
-	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-		if (strstr(buffer, "Name=") != NULL) {
-			if (strstr(buffer, "GenericName=") != NULL)
-				continue;
-			getnameexec(buffer, name, 0);
-			if (checkignoredentry(name)) {
-				name[0] = '\0';
-				break;
-			}
-			if (found)
-				break;
-			found++;
-		}
-		if (strstr(buffer, "Exec=") != NULL) {
-			getnameexec(buffer, exec, 1);
-			if (found)
-				break;
-			found++;
-		}
-	}
-	fclose(fp);
-	return appentryapp(name, exec);
-}
-
-int
-getignapplist()
-{
-	FILE *fp;
-	char *configenv;
-	char path[PATH_SIZE];
-	char buffer[BUFFER_SIZE];
-	int counter = 0;
-	
-	if ((configenv = getenv("XDG_CONFIG_HOME")) == NULL) {
-		if ((configenv = getenv("HOME")) == NULL) {
-			perror("Failed to get \"HOME\" enviroment variable");
-			exit(EXIT_FAILURE);
-		}
-		strcpy(path, configenv);
-		strcat(path, "/.config");
-	} else {
-		strcpy(path, configenv);
-	}
-	strcat(path, ignorepath);
-
-	if ((fp = fopen(path, "r")) == NULL)
-		return -1;
-
-	while (fgets(buffer, sizeof(buffer), fp) != NULL)
-		counter++;
-
-	fseek(fp, 0, SEEK_SET);
-
-	if ((ignapplist = (char**) malloc(counter * sizeof(char*))) == NULL)
-		return 0;
-
-	for (int i = 0; i < counter; i++) {
-		if ((ignapplist[i] = (char*) malloc(NAME_ENTRY_LEN * sizeof(char))) == NULL) {
-			freeignapplist();
-			return 0;
-		}
-		ignappsize++;
-	}
-
-	counter = 0;
-	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-		if (counter == ignappsize) {
-			perror("More entries found in buffer than expected:getignapplist()");
+		if (strstr(buf, "[Desktop Action "))
 			break;
-		}
-		parsestr(buffer);
-		if (strlen(buffer) > NAME_ENTRY_LEN - 1) {
-			fprintf(stderr, "Name entry '%s' length %ld larger than allowed size, %d bytes\n", buffer, strlen(buffer), NAME_ENTRY_LEN - 1);
+		if ((ptr = strstr(buf, "Name=")) == buf && !name) {
+			ptr = strchr(buf, '=');
+			name = strdup(ptr + 1);
 			continue;
 		}
-		strcpy(ignapplist[counter++], buffer);
-	}
-
-	if (counter < ignappsize) {
-		ignappsize = counter;
-		ignapplist = (char**) realloc(ignapplist, ignappsize);
-	}
-
-	fclose(fp);
-	return 1;
-}
-
-void
-getnameexec(char *string, char *ret, int isexec)
-{
-	char *temp;
-	char *cptr;
-
-	temp = strchr(string, '=');
-	temp ++;
-	cptr = strchr(temp, '\n');
-	if (cptr != NULL)
-		*cptr = '\0';
-	if (isexec) {
-		cptr = strstr(temp, " %");
-		if (cptr != NULL)
-			*cptr = '\0';
-	}
-	strcpy(ret, temp);
-}
-
-void
-parsestr(char *str)
-{
-	char *temp = strchr(str, '\n');
-	if (temp != NULL)
-		*temp='\0';
-}
-
-void
-prependapp(char *name)
-{
-	FILE *fp, *tmp;
-	char *cacheenv;
-	char buffer[NAME_ENTRY_LEN + 1];
-	char path[PATH_SIZE];
-	char temppath[PATH_SIZE];
-
-	if ((cacheenv = getenv("XDG_CACHE_HOME")) == NULL) {
-		if ((cacheenv = getenv("HOME")) == NULL) {
-			perror("Failed in getting the \"HOME\" environment variable");
-			exit(EXIT_FAILURE);
-		}
-		strcpy(path, cacheenv);
-		strcat(path, "/.cache");
-	} else {
-		strcpy(path, cacheenv);
-	}
-
-	for(int i = 0; i < cachepathsize; i++)
-		strcat(path, cachepath[i]);
-	strcpy(temppath, path);
-	strcat(temppath, ".tmp");
-
-	if((fp = fopen(path, "r")) == NULL) {
-		perror("Failed to open applicationlist");
-		exit(EXIT_FAILURE);
-	}
-	tmp = fopen(temppath, "w");
-	fprintf(tmp, "%s\n", name);
-	while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-		parsestr(buffer);
-		if (strcmp(buffer, name) == 0)
+		if ((ptr = strstr(buf, "Exec=")) == buf && !exec) {
+			if ((ptr = strrchr(buf, '%')))
+				*ptr = '\0';
+			ptr = strchr(buf, '=');
+			exec = strdup(ptr + 1);
 			continue;
-		fprintf(tmp, "%s\n", buffer);
+		}
 	}
-	fclose(fp);
-	fclose(tmp);
-	remove(path);
-	rename(temppath, path);
+
+	if (!name || !exec) {
+		if (name)
+			free(name);
+		if (exec)
+			free(exec);
+		return;
+	}
+
+	arr->ni++;
+	if (!(temparr = realloc(arr->i, arr->ni * sizeof(Exec*)))) {
+		perror("realloc() failed");
+		exit(errno);
+	}
+
+	if (!(temparr[arr->ni - 1] = malloc(sizeof(Exec)))) {
+		perror("malloc() failed");
+		exit(errno);
+	}
+
+	temparr[arr->ni - 1]->exec = exec;
+	temparr[arr->ni - 1]->name = name;
+	arr->i = temparr;
 }
 
-char*
-printmenu(char *menu, char **argv, int argc)
+static void
+removeentry(ExecArray *arr, const char *name)
 {
-	char **cmd;
-	char *buffer;
-	int writepipe[2];
-	int readpipe[2];
-	
+	for (size_t i = 0; i < arr->ni; i++) {
+		if (!strcmp(arr->i[i]->name, name)) {
+			Exec **temp;
 
-	if (pipe(writepipe) < 0 || pipe(readpipe) < 0) {
-		perror("Failed to initialize pipes");
-		exit(EXIT_FAILURE);
-	}
-
-	buffer = (char*) malloc(NAME_ENTRY_LEN * sizeof(char));
-	buffer[0] = '\0';
-
-	switch (fork()) {
-		case -1:
-			perror("Failed in forking");
-			exit(EXIT_FAILURE);
-
-		case 0: /* child - dmenu */
-			cmd = (char**) malloc((argc + 1) * sizeof(char*));
-			for (int i = 0; i < argc; i++) {
-				cmd[i] = (char*) malloc(128 * sizeof(char));
-				if (i > 0 && i != argc + 1)
-					strcpy(cmd[i], argv[i]);
+			deleteexec(arr->i[i]);
+			for (size_t j = i; j < arr->ni - 1; j++) {
+				arr->i[j] = arr->i[j + 1];
 			}
+			arr->ni--;
 
-			strcpy(cmd[0], "dmenu");
-			cmd[argc] = NULL;
+			if (!(temp = realloc(arr->i, arr->ni * sizeof(Exec*)))) {
+				perror("realloc() failed");
+				exit(errno);
+			}
+			arr->i = temp;
+			return;
+		}
+	}
+}
 
-			close(writepipe[1]);
-			close(readpipe[0]);
+static void
+removeignored(ExecArray *arr)
+{
+	FILE *fp;
+	char buf[BUF_SIZE];
+	
+	if(!(fp = fopen(getpath(ignorepath), "r")))
+		return;
 
-			dup2(writepipe[0], STDIN_FILENO);
-			close(writepipe[0]);
-
-			dup2(readpipe[1], STDOUT_FILENO);
-			close(readpipe[1]);
-
-			execv("/usr/local/bin/dmenu", cmd);
-			exit(EXIT_SUCCESS);
-
-		default: /* parent */
-			close(writepipe[0]);
-			close(readpipe[1]);
-
-			write(writepipe[1], menu, strlen(menu));
-			close(writepipe[1]);
-			wait(NULL);
-
-			read(readpipe[0], buffer, NAME_ENTRY_LEN * sizeof(char));
-			close(readpipe[0]);
+	while (fgets(buf, sizeof(buf), fp)) {
+		trimwhitespace(buf);
+		removeentry(arr, buf);
 	}
 
-	if (buffer[0] == '\0') {
-		free(buffer);
-		return NULL;
+	fclose(fp);
+}
+
+static void
+setexecorder(ExecArray *arr)
+{
+	FILE *fp;
+	char buf[BUF_SIZE];
+	int index = 0;
+
+	if (!(fp = fopen(getpath(cachepath), "r")))
+		return;
+
+	while (fgets(buf, sizeof(buf), fp)) {
+		trimwhitespace(buf);
+		for (size_t i = index; i < arr->ni; i++) {
+			if (!strcmp(buf, arr->i[i]->name)) {
+				swapexec(arr, index, i);
+				index++;
+				break;
+			}
+		}
+	}
+}
+
+static void
+swapexec(ExecArray *arr, const size_t indexa, const size_t indexb)
+{
+	Exec *temp;
+
+	temp = arr->i[indexa];
+	arr->i[indexa] = arr->i[indexb];
+	arr->i[indexb] = temp;
+}
+
+static void
+trimwhitespace(char *str)
+{
+	char *end;
+	char *original = str;
+
+	while(isspace((unsigned char)*str)) str++;
+
+	if(*str == 0) {
+		*original = '\0';
+		return;
 	}
 
-	return buffer;
+	end = str + strlen(str) - 1;
+	while(end > str && isspace((unsigned char)*end)) end--;
+
+	*(end+1) = '\0';
+
+	if (str != original) {
+		memmove(original, str, end - str + 2); // +2 to include the null terminator
+	}
+}
+
+static void
+writeselection(ExecArray *arr, const int selection)
+{
+	char *path;
+	char *temp;
+	char *ptr;
+	char buf[BUF_SIZE];
+	int found;
+	FILE *fin, *fout;
+
+	temp = getpath(cachepath);
+	path = getpath(cachepath);
+	if (!(ptr = realloc(temp, (strlen(temp) + 6) * sizeof(char)))) {
+		perror("malloc() failed");
+		exit(errno);
+	}
+	strcat(ptr, ".temp");
+	temp = ptr;
+
+	mkparentdir(temp);
+
+	if (!(fout = fopen(temp, "w"))) {
+		perror("fopen() failed");
+		exit(errno);
+	}
+
+	fprintf(fout, "%s\n", arr->i[selection]->name);
+
+	if ((fin = fopen(path, "r"))) {
+		while (fgets(buf, sizeof(buf), fin)) {
+			trimwhitespace(buf);
+			found = 0;
+			if (!strcmp(buf, arr->i[selection]->name))
+				continue;
+			for (size_t i = 0; i < arr->ni; i++) {
+				if (!strcmp(buf, arr->i[i]->name)) {
+					found = 1;
+					break;
+				}
+			}
+			if (!found)
+				continue;
+			fprintf(fout, "%s\n", buf);
+		}
+	}
+	if (fin)
+		fclose(fin);
+	fclose(fout);
+
+	remove(path);
+	rename(temp, path);
 }
 
 int
 main(int argc, char *argv[])
 {
-	char *cmd;
+	ExecArray *exec = getexec();
+	int selection;
 
-	getentries("/usr/share/applications/");
+	setexecorder(exec);
 
-	if ((cmd = getcommand(argv, argc)) == NULL)
-		return EXIT_SUCCESS;
+	if ((selection = getindex(exec, argv)) < 0)
+		return 0;
 
-	execcmd(cmd);	
-	return EXIT_SUCCESS;
+	execute(exec->i[selection]);
+	writeselection(exec, selection);
+
+	freeexecarray(exec);
+	return 0;
 }
