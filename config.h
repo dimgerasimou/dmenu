@@ -1,1 +1,0 @@
-../../../.local/src/dotfiles/dmenu/.local/src/dmenu/config.h
