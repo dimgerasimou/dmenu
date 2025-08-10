@@ -28,6 +28,9 @@ stest: obj/stest.o
 dmenu_appmenu: obj/dmenu_appmenu.o
 	$(CC) -o bin/$@ obj/dmenu_appmenu.o
 
+config.h:
+	cp config.def.h config.h
+
 clean:
 	rm -f dmenu-$(VERSION).tar.gz
 	rm -rf bin/ obj/
