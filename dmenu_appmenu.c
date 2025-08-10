@@ -31,8 +31,8 @@ typedef struct {
 	size_t ni;
 } ExecArray;
 
-const char *ignorepath[] = {"$XDG_CONFIG_HOME", "dmenu", "ignoreapplications", NULL};
-const char *cachepath[] = {"$XDG_CACHE_HOME", "dmenu", "applicationlist"};
+const char *ignorepath[] = {"$XDG_CONFIG_HOME", "dmenu", "dmenu-appmenu-blocklist", NULL};
+const char *cachepath[] = {"$XDG_CACHE_HOME", "dmenu", "dmenu-appmenu-applist"};
 const char *entriespath[] = {"usr", "share", "applications"};
 
 static void addexecentry(ExecArray *arr, const char *path);
